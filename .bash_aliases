@@ -1,0 +1,23 @@
+# Git
+alias gst='git status'
+alias gco='git checkout'
+alias gbr='git branch'
+alias gdf='git diff'
+alias gdfs='git diff --staged'
+alias gdfn='git diff --no-index'
+alias gplo='git pull origin'
+alias gpso='git push origin'
+alias gmnf='git merge --no-ff'
+
+# Docker
+alias dcls='docker container ps -a'
+alias dcst='docker stop'
+alias dcex='docker exec -it'
+alias dcsta='dcst $(dcls -q)'
+alias dcrm='docker rm'
+alias dcrma='dcrm $(dcls -q)'
+alias dils='docker image ls -a'
+alias dirm='docker rmi'
+alias dirma='dirm $(dils -q)'
+
+# Utils
