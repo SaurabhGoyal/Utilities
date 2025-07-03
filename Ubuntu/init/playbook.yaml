@@ -1,0 +1,155 @@
+---
+- name: Ubuntu Init Playbook
+  hosts: localhost
+  connection: local
+  become: true
+  become_user: saurabh-goyal
+
+  vars:
+    # Basic
+    user_project_dir: "{{ original_user_home_dir }}/Projects"
+    # Git
+    ssh_key_email: "saurabh.2561@gmail.com"
+    # Repo based setup
+    git_repo_url: "git@github.com:SaurabhGoyal/Utilities.git"
+    git_repo_clone_path: "{{ user_project_dir }}/Utilities"
+
+  pre_tasks:
+    - name: Set fact for original user's home directory
+      ansible.builtin.set_fact:
+        original_user_home_dir: "{{ lookup('env', 'HOME') }}"
+      delegate_to: localhost # Ensure this runs on the control node before becoming root
+
+    - name: Set fact for original user's name
+      ansible.builtin.set_fact:
+        original_user_name: "{{ lookup('env', 'USER') }}"
+      delegate_to: localhost # Ensure this runs on the control node before becoming root
+
+    - name: Debug original user's home directory and name
+      ansible.builtin.debug:
+        msg: "Original user's home directory: {{ original_user_home_dir }}, Original user's name: {{ original_user_name }}"
+
+  tasks:
+    - name: Ensure projects directory exists
+      ansible.builtin.file:
+        path: "{{ user_project_dir }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ original_user_name }}"
+        group: "{{ original_user_name }}"
+      delegate_to: localhost
+
+    - name: Ensure SSH directory exists
+      ansible.builtin.file:
+        path: "{{ original_user_home_dir }}/.ssh"
+        state: directory
+        mode: '0755'
+        owner: "{{ original_user_name }}"
+        group: "{{ original_user_name }}"
+      delegate_to: localhost
+
+    - name: Ensure apt cache is updated
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install essential packages for Git and SSH client
+      ansible.builtin.apt:
+        name:
+          - curl
+          - git
+          - openssh-client
+        state: present
+
+    - name: Set Git user name globally
+      ansible.builtin.command: "git config --global user.name '{{ original_user_name }}'" # Capitalize for a common display name
+      changed_when: false
+
+    - name: Set Git user email globally
+      ansible.builtin.command: "git config --global user.email '{{ ssh_key_email }}'"
+      changed_when: false
+
+    - name: Check for existing SSH public key ({{ original_user_home_dir }}/.ssh/id_rsa.pub)
+      ansible.builtin.stat:
+        path: "{{ original_user_home_dir }}/.ssh/id_rsa.pub"
+      register: ssh_key_stat
+      delegate_to: localhost
+ 
+    - name: Generate SSH key pair if not found
+      community.crypto.openssh_keypair:
+        path: "{{ original_user_home_dir }}/.ssh/id_rsa"
+        type: rsa # Using rsa for broader compatibility, ed25519 is also good
+        size: 4096
+        force: no
+        comment: "{{ ssh_key_email }}"
+      when: not ssh_key_stat.stat.exists
+      delegate_to: localhost
+
+    - name: Check if ssh-agent is running for the user
+      ansible.builtin.shell: "pgrep -u {{ original_user_name }} ssh-agent"
+      register: ssh_agent_running
+      ignore_errors: true
+      changed_when: false
+      delegate_to: localhost
+
+    - name: Start ssh-agent if not running
+      ansible.builtin.shell: |
+        eval "$(ssh-agent -s)"
+      when: ssh_agent_running.rc != 0
+      delegate_to: localhost
+
+    - name: Add SSH key to ssh-agent
+      ansible.builtin.shell: |
+        ssh-add "{{ original_user_home_dir }}/.ssh/id_rsa"
+      args:
+        creates: "{{ original_user_home_dir }}/.ssh/id_rsa.pub" # Only run if key exists
+      when: ssh_key_stat.stat.exists # Only add if key exists
+      delegate_to: localhost
+
+    - name: Wait for user to confirm SSH key added to GitHub
+      ansible.builtin.pause:
+        prompt: |
+          ======================================================================
+          SSH Public Key Action Required:
+          Your SSH public key is located at:
+          {{ original_user_home_dir }}/.ssh/id_rsa.pub
+
+          Please perform the following steps MANUALLY:
+          1. View and copy the content of your public key file:
+             cat {{ original_user_home_dir }}/.ssh/id_rsa.pub
+          2. Go to your GitHub account settings:
+             https://github.com/settings/keys
+          3. Click "New SSH key" or "Add SSH key".
+          4. Paste the copied public key content into the "Key" field.
+          5. Give it a descriptive title (e.g., "Ubuntu Laptop - {{ ssh_key_email }}").
+
+          Press Enter to continue after adding the key to GitHub.
+          ======================================================================
+
+    - name: Verify SSH access to GitHub with new key
+      ansible.builtin.shell: |
+        ssh -o StrictHostKeyChecking=no -T git@github.com 2>&1
+      register: ssh_test_result
+      until: ssh_test_result.stdout is search("Hi .*! You've successfully authenticated, but GitHub does not provide shell access.")
+      retries: 5
+      delay: 30
+      failed_when: ssh_test_result.stdout is not search("Hi .*! You've successfully authenticated, but GitHub does not provide shell access.")
+      delegate_to: localhost # Ensure it runs on the control node
+
+    - name: Ensure Git repository directory exists
+      ansible.builtin.file:
+        path: "{{ git_repo_clone_path }}"
+        state: directory
+        mode: '0755' # Standard permissions for directories
+        owner: "{{ original_user_name }}" # Set owner to the original user
+        group: "{{ original_user_name }}" # Set group to the original user
+      
+    - name: Clone or update the main Ansible configuration repository
+      ansible.builtin.git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ git_repo_clone_path }}"
+        version: master
+        single_branch: yes
+        accept_hostkey: yes
+      delegate_to: localhost # Ensure it runs on the control node
+

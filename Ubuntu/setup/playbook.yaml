@@ -1,0 +1,89 @@
+---
+- name: Setup Core Applications and Configurations on Ubuntu
+  hosts: localhost
+  connection: local
+  become: true
+  
+  vars:
+    # Basic
+    user_project_dir: "{{ original_user_home_dir }}/Projects"
+    setup_repo_dir: "{{ user_project_dir }}/Utilities/Ubuntu/setup"
+    bash_custom_config_path: ".bash_custom_config"
+    
+  pre_tasks:
+    - name: Set fact for original user's home directory
+      ansible.builtin.set_fact:
+        original_user_home_dir: "{{ lookup('env', 'HOME') }}"
+      delegate_to: localhost # Ensure this runs on the control node before becoming root
+
+    - name: Set fact for original user's name
+      ansible.builtin.set_fact:
+        original_user_name: "{{ lookup('env', 'USER') }}"
+      delegate_to: localhost # Ensure this runs on the control node before becoming root
+
+    - name: Debug original user's home directory and name
+      ansible.builtin.debug:
+        msg: "Original user's home directory: {{ original_user_home_dir }}, Original user's name: {{ original_user_name }}"
+  
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install common dependencies
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - gnupg
+        state: present
+
+    # --- .bash* files setup ---
+    - name: Copy .bash* files to user's home directory
+      ansible.builtin.copy:
+        src: "{{ setup_repo_dir }}/{{ bash_custom_config_path }}"
+        dest: "{{ original_user_home_dir }}/"
+        owner: "{{ original_user_name }}"
+        group: "{{ original_user_name }}"
+        mode: '0644'
+
+    - name: Add sourcing line to .bashrc if not present
+      ansible.builtin.lineinfile:
+        path: "{{ original_user_home_dir }}/.bashrc"
+        line: "source {{ original_user_home_dir }}/{{ bash_custom_config_path }}" # Assuming one of your copied files is this
+        create: yes
+        owner: "{{ original_user_name }}"
+        group: "{{ original_user_name }}"
+        mode: '0644'
+# --- Install / Update CopyQ ---
+    - name: Ensure /etc/apt/keyrings directory exists for CopyQ
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+ 
+    - name: Download and add CopyQ GPG key to /etc/apt/keyrings
+      ansible.builtin.get_url:
+        url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=copyq" # Key ID for CopyQ PPA
+        dest: "/etc/apt/keyrings/copyq-archive-keyring.gpg"
+        mode: '0644'
+        force: yes
+
+    - name: Add CopyQ PPA repository (DEB822 format)
+      ansible.builtin.deb822_repository:
+        name: copyq-ppa # Name for the .sources file (e.g., copyq-ppa.sources)
+        types: deb
+        uris: http://ppa.launchpad.net/hluk/copyq/ubuntu
+        suites: "{{ ansible_distribution_release }}"
+        components: main
+        signed_by: /etc/apt/keyrings/copyq-archive-keyring.gpg
+        state: present
+
+    - name: Install CopyQ
+      ansible.builtin.apt:
+        name: copyq
+        state: latest
+

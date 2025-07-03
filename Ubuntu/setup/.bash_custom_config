@@ -20,4 +20,3 @@ alias dils='docker image ls -a'
 alias dirm='docker rmi'
 alias dirma='dirm $(dils -q)'
 
-# Utils
