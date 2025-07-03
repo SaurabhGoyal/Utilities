@@ -58,32 +58,53 @@
         owner: "{{ original_user_name }}"
         group: "{{ original_user_name }}"
         mode: '0644'
-# --- Install / Update CopyQ ---
-    - name: Ensure /etc/apt/keyrings directory exists for CopyQ
+    
+    # --- Install / Update CopyQ ---
+    - name: Ensure /etc/apt/keyrings directory exists for further installations
       ansible.builtin.file:
         path: /etc/apt/keyrings
         state: directory
         mode: '0755'
  
-    - name: Download and add CopyQ GPG key to /etc/apt/keyrings
-      ansible.builtin.get_url:
-        url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=copyq" # Key ID for CopyQ PPA
-        dest: "/etc/apt/keyrings/copyq-archive-keyring.gpg"
-        mode: '0644'
-        force: yes
+    - name: CopyQ Installation Tasks
+      block:
+        - name: Download and add CopyQ GPG key to /etc/apt/keyrings
+          ansible.builtin.get_url:
+            url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=copyq" # Key ID for CopyQ PPA
+            dest: "/etc/apt/keyrings/copyq-archive-keyring.gpg"
+            mode: '0644'
+            force: yes
 
-    - name: Add CopyQ PPA repository (DEB822 format)
-      ansible.builtin.deb822_repository:
-        name: copyq-ppa # Name for the .sources file (e.g., copyq-ppa.sources)
-        types: deb
-        uris: http://ppa.launchpad.net/hluk/copyq/ubuntu
-        suites: "{{ ansible_distribution_release }}"
-        components: main
-        signed_by: /etc/apt/keyrings/copyq-archive-keyring.gpg
+        - name: Add CopyQ PPA repository (DEB822 format)
+          ansible.builtin.deb822_repository:
+            name: copyq-ppa # Name for the .sources file (e.g., copyq-ppa.sources)
+            types: deb
+            uris: http://ppa.launchpad.net/hluk/copyq/ubuntu
+            suites: "{{ ansible_distribution_release }}"
+            components: main
+            signed_by: /etc/apt/keyrings/copyq-archive-keyring.gpg
+            state: present
+
+        - name: Install CopyQ
+          ansible.builtin.apt:
+            name: copyq
+            state: latest
+
+    - name: VLC Installation
+      block:
+        - name: Install VLC
+          ansible.builtin.apt:
+            name: vlc
+            state: latest
+
+    - name: Install libfuse2 for AppImage support
+      ansible.builtin.apt:
+        name: libfuse2t64
         state: present
 
-    - name: Install CopyQ
+    - name: Install Node.js and npm
       ansible.builtin.apt:
-        name: copyq
+        name:
+          - nodejs
+          - npm # Explicitly install npm
         state: latest
-
