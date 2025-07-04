@@ -3,6 +3,7 @@
   hosts: localhost
   connection: local
   become: true
+  become_user: saurabh-goyal
   
   vars:
     # Basic
@@ -26,85 +27,173 @@
         msg: "Original user's home directory: {{ original_user_home_dir }}, Original user's name: {{ original_user_name }}"
   
   tasks:
-    - name: Update apt cache
-      ansible.builtin.apt:
-        update_cache: yes
-        cache_valid_time: 3600
-
-    - name: Install common dependencies
-      ansible.builtin.apt:
-        name:
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - software-properties-common
-          - gnupg
-        state: present
-
-    # --- .bash* files setup ---
-    - name: Copy .bash* files to user's home directory
-      ansible.builtin.copy:
-        src: "{{ setup_repo_dir }}/{{ bash_custom_config_path }}"
-        dest: "{{ original_user_home_dir }}/"
-        owner: "{{ original_user_name }}"
-        group: "{{ original_user_name }}"
-        mode: '0644'
-
-    - name: Add sourcing line to .bashrc if not present
-      ansible.builtin.lineinfile:
-        path: "{{ original_user_home_dir }}/.bashrc"
-        line: "source {{ original_user_home_dir }}/{{ bash_custom_config_path }}" # Assuming one of your copied files is this
-        create: yes
-        owner: "{{ original_user_name }}"
-        group: "{{ original_user_name }}"
-        mode: '0644'
-    
-    # --- Install / Update CopyQ ---
-    - name: Ensure /etc/apt/keyrings directory exists for further installations
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
- 
-    - name: CopyQ Installation Tasks
+    - name: Prerequisites
+      tags:
+        - prereq
       block:
-        - name: Download and add CopyQ GPG key to /etc/apt/keyrings
-          ansible.builtin.get_url:
-            url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=copyq" # Key ID for CopyQ PPA
-            dest: "/etc/apt/keyrings/copyq-archive-keyring.gpg"
-            mode: '0644'
-            force: yes
+      - name: Update apt cache
+        ansible.builtin.apt:
+          update_cache: yes
+          cache_valid_time: 3600
+        changed_when: false
+        become: true
+        become_user: root
 
-        - name: Add CopyQ PPA repository (DEB822 format)
-          ansible.builtin.deb822_repository:
-            name: copyq-ppa # Name for the .sources file (e.g., copyq-ppa.sources)
-            types: deb
-            uris: http://ppa.launchpad.net/hluk/copyq/ubuntu
-            suites: "{{ ansible_distribution_release }}"
-            components: main
-            signed_by: /etc/apt/keyrings/copyq-archive-keyring.gpg
-            state: present
+      - name: Install common dependencies
+        ansible.builtin.apt:
+          name:
+            - apt-transport-https
+            - ca-certificates
+            - curl
+            - software-properties-common
+            - gnupg
+          state: present
+        become: true
+        become_user: root
 
-        - name: Install CopyQ
-          ansible.builtin.apt:
-            name: copyq
-            state: latest
+      - name: Install libfuse2 for AppImage support
+        ansible.builtin.apt:
+          name: libfuse2t64
+          state: present
+        become: true
+        become_user: root
 
-    - name: VLC Installation
+      - name: Install Node.js and npm
+        ansible.builtin.apt:
+          name:
+            - nodejs
+            - npm # Explicitly install npm
+          state: latest
+        become: true
+        become_user: root
+
+      - name: Ensure keyring directory
+        ansible.builtin.file:
+          path: /etc/opt/keyrings
+          state: directory
+          mode: '0755'
+        become: true
+        become_user: root
+
+    - name: Local Environment
+      tags:
+        - local_env
+      block:
+      - name: Copy .bash* files to user's home directory
+        ansible.builtin.copy:
+          src: "{{ setup_repo_dir }}/{{ bash_custom_config_path }}"
+          dest: "{{ original_user_home_dir }}/"
+          owner: "{{ original_user_name }}"
+          group: "{{ original_user_name }}"
+          mode: '0644'
+
+      - name: Add sourcing line to .bashrc if not present
+        ansible.builtin.lineinfile:
+          path: "{{ original_user_home_dir }}/.bashrc"
+          line: "source {{ original_user_home_dir }}/{{ bash_custom_config_path }}" # Assuming one of your copied files is this
+          create: yes
+          owner: "{{ original_user_name }}"
+          group: "{{ original_user_name }}"
+          mode: '0644'
+
+    - name: Apps
+      tags:
+        - apps
       block:
         - name: Install VLC
           ansible.builtin.apt:
             name: vlc
             state: latest
+          become: true
+          become_user: root
 
-    - name: Install libfuse2 for AppImage support
-      ansible.builtin.apt:
-        name: libfuse2t64
-        state: present
+        - name: Install Chrome
+          tags:
+            - chrome
+          block:
+            - name: Fetch chrome signing key
+              ansible.builtin.get_url:
+                url: https://dl.google.com/linux/linux_signing_key.pub
+                dest: /etc/opt/keyrings/google-chrome.asc
+                mode: '0644'
+              become: true
+              become_user: root
 
-    - name: Install Node.js and npm
-      ansible.builtin.apt:
-        name:
-          - nodejs
-          - npm # Explicitly install npm
-        state: latest
+            - name: Add chrome repository
+              ansible.builtin.apt_repository:
+                repo: "deb [arch=amd64 signed-by=/etc/opt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb stable main"
+                state: present
+                filename: google-chrome
+                update_cache: true
+              become: true
+              become_user: root
+
+            - name: Install chrome
+              ansible.builtin.apt:
+                name: google-chrome-stable
+                state: present
+              become: true
+              become_user: root
+
+        - name: Install Copyq
+          tags:
+            - copyq
+          block:
+            - name: Add copyq repository
+              ansible.builtin.apt_repository:
+                repo: "ppa:hluk/copyq"
+                state: present
+                update_cache: true
+              become: true
+              become_user: root
+
+            - name: Install copyq
+              ansible.builtin.apt:
+                name: copyq
+                state: present
+              become: true
+              become_user: root
+
+        - name: Install Docker
+          tags:
+            - docker
+          block:
+            - name: Fetch docker signing key
+              ansible.builtin.get_url:
+                url: https://download.docker.com/linux/ubuntu/gpg
+                dest: /etc/opt/keyrings/docker.asc
+                mode: '0644'
+              become: true
+              become_user: root
+
+            - name: Add docker repository
+              ansible.builtin.apt_repository:
+                repo: "deb [arch=amd64 signed-by=/etc/opt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+                state: present
+                update_cache: true
+              become: true
+              become_user: root
+
+            - name: Install docker
+              ansible.builtin.apt:
+                name:
+                  - docker-ce
+                  - docker-ce-cli
+                  - containerd.io
+                  - docker-buildx-plugin
+                  - docker-compose-plugin
+                state: present
+              become: true
+              become_user: root
+
+        - name: Install Postman
+          tags:
+            - postman
+          block:
+            - name: Install postman from snap
+              community.general.snap:
+                name: postman
+                state: present
+              become: true
+              become_user: root
+

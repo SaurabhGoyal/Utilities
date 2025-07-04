@@ -52,6 +52,8 @@
       ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 3600
+      become: true
+      become_user: root
 
     - name: Install essential packages for Git and SSH client
       ansible.builtin.apt:
@@ -60,6 +62,8 @@
           - git
           - openssh-client
         state: present
+      become: true
+      become_user: root
 
     - name: Set Git user name globally
       ansible.builtin.command: "git config --global user.name '{{ original_user_name }}'" # Capitalize for a common display name
