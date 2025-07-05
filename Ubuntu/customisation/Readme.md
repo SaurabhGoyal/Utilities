@@ -1,0 +1,1 @@
+- [VScode / Cursor] - Install Synthwave 84 theme. Then enable Neon Dreams by running Synthwave command using `ctrl + shift + p`. (Use [this link](https://github.com/robb0wen/synthwave-vscode/issues/138#issuecomment-590111809) to fix permissions.)

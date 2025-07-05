@@ -3,8 +3,7 @@
   hosts: localhost
   connection: local
   become: true
-  become_user: saurabh-goyal
-  
+
   vars:
     # Basic
     user_project_dir: "{{ original_user_home_dir }}/Projects"
@@ -15,12 +14,16 @@
     - name: Set fact for original user's home directory
       ansible.builtin.set_fact:
         original_user_home_dir: "{{ lookup('env', 'HOME') }}"
-      delegate_to: localhost # Ensure this runs on the control node before becoming root
+      delegate_to: localhost
+      become: true
+      become_user: saurabh-goyal
 
     - name: Set fact for original user's name
       ansible.builtin.set_fact:
         original_user_name: "{{ lookup('env', 'USER') }}"
-      delegate_to: localhost # Ensure this runs on the control node before becoming root
+      delegate_to: localhost
+      become: true
+      become_user: saurabh-goyal
 
     - name: Debug original user's home directory and name
       ansible.builtin.debug:
@@ -36,8 +39,6 @@
           update_cache: yes
           cache_valid_time: 3600
         changed_when: false
-        become: true
-        become_user: root
 
       - name: Install common dependencies
         ansible.builtin.apt:
@@ -48,15 +49,11 @@
             - software-properties-common
             - gnupg
           state: present
-        become: true
-        become_user: root
 
       - name: Install libfuse2 for AppImage support
         ansible.builtin.apt:
           name: libfuse2t64
           state: present
-        become: true
-        become_user: root
 
       - name: Install Node.js and npm
         ansible.builtin.apt:
@@ -64,16 +61,12 @@
             - nodejs
             - npm # Explicitly install npm
           state: latest
-        become: true
-        become_user: root
 
       - name: Ensure keyring directory
         ansible.builtin.file:
           path: /etc/opt/keyrings
           state: directory
           mode: '0755'
-        become: true
-        become_user: root
 
     - name: Local Environment
       tags:
@@ -86,6 +79,8 @@
           owner: "{{ original_user_name }}"
           group: "{{ original_user_name }}"
           mode: '0644'
+        become: true
+        become_user: saurabh-goyal
 
       - name: Add sourcing line to .bashrc if not present
         ansible.builtin.lineinfile:
@@ -95,6 +90,8 @@
           owner: "{{ original_user_name }}"
           group: "{{ original_user_name }}"
           mode: '0644'
+        become: true
+        become_user: saurabh-goyal
 
     - name: Apps
       tags:
@@ -104,8 +101,6 @@
           ansible.builtin.apt:
             name: vlc
             state: latest
-          become: true
-          become_user: root
 
         - name: Install Chrome
           tags:
@@ -116,8 +111,6 @@
                 url: https://dl.google.com/linux/linux_signing_key.pub
                 dest: /etc/opt/keyrings/google-chrome.asc
                 mode: '0644'
-              become: true
-              become_user: root
 
             - name: Add chrome repository
               ansible.builtin.apt_repository:
@@ -125,15 +118,11 @@
                 state: present
                 filename: google-chrome
                 update_cache: true
-              become: true
-              become_user: root
 
             - name: Install chrome
               ansible.builtin.apt:
                 name: google-chrome-stable
                 state: present
-              become: true
-              become_user: root
 
         - name: Install Copyq
           tags:
@@ -144,15 +133,11 @@
                 repo: "ppa:hluk/copyq"
                 state: present
                 update_cache: true
-              become: true
-              become_user: root
 
             - name: Install copyq
               ansible.builtin.apt:
                 name: copyq
                 state: present
-              become: true
-              become_user: root
 
         - name: Install Docker
           tags:
@@ -163,16 +148,12 @@
                 url: https://download.docker.com/linux/ubuntu/gpg
                 dest: /etc/opt/keyrings/docker.asc
                 mode: '0644'
-              become: true
-              become_user: root
 
             - name: Add docker repository
               ansible.builtin.apt_repository:
                 repo: "deb [arch=amd64 signed-by=/etc/opt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
                 state: present
                 update_cache: true
-              become: true
-              become_user: root
 
             - name: Install docker
               ansible.builtin.apt:
@@ -183,8 +164,6 @@
                   - docker-buildx-plugin
                   - docker-compose-plugin
                 state: present
-              become: true
-              become_user: root
 
         - name: Install Postman
           tags:
@@ -194,6 +173,56 @@
               community.general.snap:
                 name: postman
                 state: present
-              become: true
-              become_user: root
+
+        - name: Install Cursor
+          tags:
+            - cursor
+          block:
+            - name: Download Cursor AppImage
+              ansible.builtin.get_url:
+                url: "https://www.cursor.com/download/stable/linux-x64"
+                dest: "/opt/Cursor.AppImage"
+                mode: '0755'
+
+            - name: Create extraction directory for Cursor
+              ansible.builtin.file:
+                path: "/opt/cursor-extracted"
+                state: directory
+                mode: '0755'
+
+            - name: Extract Cursor AppImage
+              ansible.builtin.command: "/opt/Cursor.AppImage --appimage-extract"
+              args:
+                chdir: "/opt/cursor-extracted" # Extract into this directory
+                creates: "/opt/cursor-extracted/squashfs-root" # Idempotent check
+              register: cursor_extract_result
+
+            - name: Fix chrome-sandbox permissions
+              ansible.builtin.file:
+                path: "/opt/cursor-extracted/squashfs-root/usr/share/cursor/chrome-sandbox"
+                owner: root
+                group: root
+                mode: '4755' # Set SUID bit and permissions
+                state: file # Ensure it's treated as a file
+              when: cursor_extract_result.changed # Only run if extraction happened
+
+            - name: Copy Cursor icon from playbook directory
+              ansible.builtin.copy:
+                src: "{{ playbook_dir }}/cursor.png" # Assumes cursor.png is in the same directory as the playbook
+                dest: "/opt/cursor-icon.png"
+                mode: '0644'
+
+            - name: Create Cursor desktop entry
+              ansible.builtin.copy:
+                content: |
+                  [Desktop Entry]
+                  Name=Cursor
+                  Exec=/opt/cursor-extracted/squashfs-root/AppRun %U
+                  Terminal=false
+                  Type=Application
+                  Icon=/opt/cursor-icon.png
+                  Categories=Development;IDE;
+                  StartupWMClass=Cursor
+                dest: "/usr/share/applications/cursor.desktop"
+                mode: '0644'
 
